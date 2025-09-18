@@ -7,6 +7,8 @@ import axios from "axios";
 import path from "path";
 import { fileURLToPath } from "url";
 import https from "https";
+import { wrapper } from 'axios-cookiejar-support';
+import { CookieJar } from 'tough-cookie';
 
 dotenv.config();
 const __filename = fileURLToPath(import.meta.url);
@@ -21,34 +23,38 @@ const IB_BASE = process.env.IB_GATEWAY_BASE || "https://localhost:5000/v1/api";
 const PORT = process.env.PORT || 3000;
 const HOST = process.env.HOST || "127.0.0.1";
 
-const httpsAgent = new https.Agent({ rejectUnauthorized: false, keepAlive: true });
-let sessionCookies = {};
+// Persistent cookie jar for stable session
+const jar = new CookieJar();
+const httpsAgent = new https.Agent({ rejectUnauthorized: false });
 
-const ax = axios.create({ baseURL: IB_BASE, timeout: 30000, httpsAgent, validateStatus: (status) => status >= 200 && status < 500 });
-
-ax.interceptors.request.use((config) => {
-    if (Object.keys(sessionCookies).length > 0) {
-      config.headers.Cookie = Object.entries(sessionCookies).map(([k, v]) => `${k}=${v}`).join('; ');
-    }
-    return config;
-});
-ax.interceptors.response.use((response) => {
-    const setCookieHeaders = response.headers['set-cookie'];
-    if (setCookieHeaders) {
-      setCookieHeaders.forEach(cookie => {
-        const [nameValue] = cookie.split(';');
-        const [name, value] = nameValue.split('=');
-        if (name && value) sessionCookies[name.trim()] = value.trim();
-      });
-    }
-    return response;
-});
+const ax = wrapper(axios.create({
+    jar,
+    baseURL: IB_BASE,
+    timeout: 30000,
+    validateStatus: (status) => status >= 200 && status < 500
+}), { httpsAgent });
 
 const pass = (res, err) => {
-  const status = err.response?.status || 500;
-  const message = err.response?.data?.error || err.response?.data?.message || err.message;
-  res.status(status).json({ error: true, message });
+    const status = err.response?.status || 500;
+    const message = err.response?.data?.error || err.response?.data?.message || err.message;
+    res.status(status).json({ error: true, message });
 };
+
+// Small retry helper for endpoints that often return empty
+async function safeGet(url, opts = {}, retries = 3, delay = 1000) {
+    for (let i = 0; i < retries; i++) {
+        try {
+            const { data } = await ax.get(url, opts);
+            if (Array.isArray(data) && data.length) return data;
+            if (data && data.orders && data.orders.length) return data;
+            if (i < retries - 1) await new Promise(r => setTimeout(r, delay));
+        } catch (e) {
+            if (i === retries - 1) throw e;
+            await new Promise(r => setTimeout(r, delay));
+        }
+    }
+    return [];
+}
 
 app.get("/api/status", async (req, res) => {
     try {
@@ -59,17 +65,29 @@ app.get("/api/status", async (req, res) => {
 
 app.post("/api/session/connect", async (req, res) => {
     try {
+        console.log("Attempting to connect/reauthenticate...");
+        jar.removeAllCookiesSync();
         const { data } = await ax.post("/iserver/reauthenticate");
+        console.log("Reauthentication response received.");
         res.json(data);
-    } catch (err) { pass(res, err); }
+    } catch (err) {
+        console.error("Connection/reauthentication failed:", err.message);
+        pass(res, err);
+    }
 });
 
 app.post("/api/session/disconnect", async (req, res) => {
     try {
+        console.log("Attempting to disconnect...");
         await ax.post("/logout");
-        sessionCookies = {};
+        console.log("Logout request successful.");
+    } catch (err) {
+        console.warn("Logout request failed:", err.message);
+    } finally {
+        jar.removeAllCookiesSync();
+        console.log("Cookie jar cleared. Ready for new session.");
         res.json({ success: true, message: "Successfully disconnected." });
-    } catch(err) { pass(res, err); }
+    }
 });
 
 app.get("/api/dashboard", async (req, res) => {
@@ -78,40 +96,37 @@ app.get("/api/dashboard", async (req, res) => {
         if (!accountsData?.accounts?.length) throw new Error("No accounts found.");
         const accountId = accountsData.accounts[0];
 
-        const results = await Promise.allSettled([
-             ax.get(`/portfolio/${accountId}/summary`),
-             ax.get(`/portfolio/${accountId}/ledger`),
-             ax.get(`/iserver/account/trades`),
-             ax.get(`/iserver/account/orders`),
-             ax.get(`/portfolio/${accountId}/positions/0`)
+        const [summaryRes, ledgerRes] = await Promise.all([
+            ax.get(`/portfolio/${accountId}/summary`),
+            ax.get(`/portfolio/${accountId}/ledger`)
         ]);
 
-        const [summaryRes, ledgerRes, tradesRes, ordersRes, positionsRes] = results;
+        const summaryData = summaryRes.data || {};
+        const ledgerData = ledgerRes.data || {};
 
-        const summaryData = summaryRes.status === 'fulfilled' ? summaryRes.value.data : {};
-        const ledgerData = ledgerRes.status === 'fulfilled' ? ledgerRes.value.data : {};
-        const tradesData = tradesRes.status === 'fulfilled' ? tradesRes.value.data : [];
-        const ordersData = ordersRes.status === 'fulfilled' ? ordersRes.value.data : { orders: [] };
-        const positionsData = positionsRes.status === 'fulfilled' ? positionsRes.value.data : [];
+        // Retry fetch for these
+        const tradesData = await safeGet(`/iserver/account/trades`);
+        const ordersData = await safeGet(`/iserver/account/orders`);
+        const positionsData = await safeGet(`/portfolio/${accountId}/positions/0`);
 
         const findKey = (obj, name) => Object.keys(obj).find(k => k.toLowerCase() === name.toLowerCase());
         const cashHoldings = Object.keys(ledgerData)
             .filter(key => ledgerData[key]?.acctcode === accountId && key !== 'updated')
             .map(key => ({ currency: key, amount: ledgerData[key].cashbalance }));
-        
+
         const totalUnrealizedPnl = positionsData.reduce((sum, pos) => sum + (pos.unrealizedPnl || 0), 0);
-        const totalRealizedPnl = tradesData.reduce((sum, trade) => sum + (trade.realized_pnl || 0), 0);
+        const totalRealizedPnl = (tradesData || []).reduce((sum, trade) => sum + (trade.realized_pnl || 0), 0);
 
         res.json({
             accountId,
             currency: summaryData[findKey(summaryData, 'totalcashvalue')]?.currency || 'USD',
             summary: {
-              total: summaryData[findKey(summaryData, 'netliquidation')]?.amount || 0,
-              settledCash: summaryData[findKey(summaryData, 'settledcash')]?.amount || 0,
-              unrealizedPnl: totalUnrealizedPnl,
-              realizedPnl: totalRealizedPnl,
-              maintMargin: summaryData[findKey(summaryData, 'maintmarginreq')]?.amount || 0,
-              buyingPower: summaryData[findKey(summaryData, 'buyingpower')]?.amount || 0,
+                total: summaryData[findKey(summaryData, 'netliquidation')]?.amount || 0,
+                settledCash: summaryData[findKey(summaryData, 'settledcash')]?.amount || 0,
+                unrealizedPnl: totalUnrealizedPnl,
+                realizedPnl: totalRealizedPnl,
+                maintMargin: summaryData[findKey(summaryData, 'maintmarginreq')]?.amount || 0,
+                buyingPower: summaryData[findKey(summaryData, 'buyingpower')]?.amount || 0,
             },
             cashHoldings,
             trades: tradesData,
@@ -147,9 +162,9 @@ app.get("/api/market/snapshot", async (req, res) => {
         const enriched = data.map(item => {
             const price = parseFloat(item['31']);
             if (item['31'] === 'N/A' || !price || price <= 0) {
-                 const basePrice = 150 + Math.random() * 200;
-                 const change = (Math.random() - 0.5) * 10;
-                 return {...item, '31': basePrice.toFixed(2), '83': change.toFixed(2), '82': ((change / basePrice) * 100).toFixed(2)};
+                const basePrice = 150 + Math.random() * 200;
+                const change = (Math.random() - 0.5) * 10;
+                return { ...item, '31': basePrice.toFixed(2), '83': change.toFixed(2), '82': ((change / basePrice) * 100).toFixed(2) };
             }
             return item;
         });

@@ -14,9 +14,16 @@ const app = {
             let status = await api.GET('/api/status');
             if (!status.authenticated) {
                 await api.POST('/api/session/connect');
-                await new Promise(resolve => setTimeout(resolve, 2000));
-                status = await api.GET('/api/status');
+
+                // Poll until authenticated
+                let attempts = 0;
+                while (!status.authenticated && attempts < 10) {
+                    await new Promise(r => setTimeout(r, 1000));
+                    status = await api.GET('/api/status');
+                    attempts++;
+                }
             }
+
             if (status.authenticated) {
                 ui.setConnectionStatus('Connected');
                 await this.loadDashboard();
@@ -34,14 +41,16 @@ const app = {
     async disconnect() {
         const btn = ui.$('btnDisconnect');
         btn.classList.add('loading');
-        try { 
+        try {
             await api.POST('/api/session/disconnect');
             ui.setConnectionStatus('Disconnected');
-        } catch(e) { alert(`Disconnect failed: ${e.message}`); }
+        } catch (e) { alert(`Disconnect failed: ${e.message}`); }
         btn.classList.remove('loading');
     },
 
     async loadDashboard() {
+        const loader = document.getElementById('dashboardLoader');
+        if (loader) loader.classList.add('active');  // show loader
         try {
             const data = await api.GET('/api/dashboard');
             this.baseCurrency = data.currency;
@@ -50,7 +59,12 @@ const app = {
                 this.currentPositions[p.conid] = { position: p.position, contractDesc: p.contractDesc };
             });
             ui.renderDashboard(data);
-        } catch (e) { console.error("Failed to load dashboard:", e); }
+        } catch (e) {
+            console.error("Failed to load dashboard:", e);
+            alert("Failed to load dashboard. Please try reconnecting.");
+        } finally {
+            if (loader) loader.classList.remove('active');  // hide loader
+        }
     },
 
     async search() {
@@ -67,10 +81,10 @@ const app = {
             }
             const conids = results.map(r => r.conid).join(',');
             const { data: marketData } = await api.GET(`/api/market/snapshot?conids=${conids}`);
-            const dataMap = marketData.reduce((map, item) => ({...map, [item.conid]: item}), {});
+            const dataMap = marketData.reduce((map, item) => ({ ...map, [item.conid]: item }), {});
             results.forEach(r => r.marketData = dataMap[r.conid]);
             ui.renderSearchResults(results, symbol);
-        } catch (e) { 
+        } catch (e) {
             resBody.innerHTML = `<tr><td colspan="5" style="text-align:center; color: var(--red);">Error: ${e.message}</td></tr>`;
         } finally {
             ui.$('btnSearch').classList.remove('loading');
@@ -93,17 +107,16 @@ const app = {
         const row = event.target.closest('tr');
         document.querySelectorAll('#searchResults tbody tr').forEach(r => r.classList.remove('selected-row'));
         row.classList.add('selected-row');
-        
+
         ui.$('orderConid').value = conid;
         ui.$('orderSymbol').value = symbol;
         this.selectedConid = conid;
         this.selectedSymbol = symbol;
 
-        // Update the new chart price header
         const price = row.cells[3].textContent;
-        const changeText = row.querySelector('.price-positive, .price-negative')?.textContent || (parseFloat(price.replace(/[^0-9.-]+/g,"")) > 0 ? '+0.00' : '0.00'); // Fallback change
+        const changeText = row.querySelector('.price-positive, .price-negative')?.textContent || (parseFloat(price.replace(/[^0-9.-]+/g, "")) > 0 ? '+0.00' : '0.00');
         const changeClassName = row.querySelector('.price-positive, .price-negative')?.className || '';
-        if(price !== '-') {
+        if (price !== '-') {
             const { data } = JSON.parse(row.dataset.marketData);
             const change = ui.formatChange(data['83']);
             ui.updateChartPriceInfo(price, change);
@@ -131,7 +144,7 @@ const app = {
             defaultIntervalBtn.click();
         }
     },
-    
+
     parseOrderResponse(response) {
         if (!response) return { success: false, message: "No response from server." };
         const replies = Array.isArray(response) ? response : [response];
@@ -146,7 +159,7 @@ const app = {
             }
             const errorText = reply.error || reply.text;
             if (errorText) {
-                return { success: false, message: `Order Failed: ${errorText}`};
+                return { success: false, message: `Order Failed: ${errorText}` };
             }
         }
         return { success: true, message: "Order submitted, but received an unknown confirmation ID." };
@@ -157,17 +170,17 @@ const app = {
         btn.classList.add('loading');
         try {
             const order = orderToPlace || {
-                accountId: ui.$('activeAccountDisplay').textContent, conid: parseInt(ui.$('orderConid').value), 
-                orderType: ui.$('orderType').value, side: ui.$('orderSide').value, 
+                accountId: ui.$('activeAccountDisplay').textContent, conid: parseInt(ui.$('orderConid').value),
+                orderType: ui.$('orderType').value, side: ui.$('orderSide').value,
                 quantity: parseInt(ui.$('orderQty').value), tif: "DAY", secType: "STK"
             };
             if (order.orderType === 'LMT') order.price = parseFloat(ui.$('orderPrice').value);
             if (!order.accountId || !order.conid || !order.quantity) throw new Error("Account, Contract ID and Quantity are required.");
-            
+
             this.lastOrderAttempt = order;
             const response = await api.POST('/api/order/place', order);
             const confirmation = this.parseOrderResponse(response);
-            
+
             if (confirmation.isFx) {
                 const neededMatch = confirmation.message.match(/CASH NEEDED.*?([\d,.]+)/);
                 const neededAmount = neededMatch ? parseFloat(neededMatch[1].replace(/,/g, '')) : 500;
@@ -199,19 +212,19 @@ const app = {
                 accountId: ui.$('activeAccountDisplay').textContent, conid: fxContract.conid,
                 orderType: 'MKT', side: 'BUY', quantity: amount, tif: "DAY", secType: "CASH"
             };
-            
+
             const fxResponse = await api.POST('/api/order/place', fxOrder);
             const fxConfirmation = this.parseOrderResponse(fxResponse);
             if (!fxConfirmation.success) throw new Error(`Currency conversion failed: ${fxConfirmation.message}`);
-            
+
             alert(`Successfully submitted currency conversion: ${fxConfirmation.message}`);
             ui.$('fxModal').classList.add('hidden');
-            
+
             alert('Waiting 5 seconds for funds to settle before retrying the stock order...');
-            await sleep(5000);
+            await new Promise(resolve => setTimeout(resolve, 5000));
             await this.placeOrder(this.lastOrderAttempt);
-            
-        } catch(e) { alert(`An error occurred during conversion: ${e.message}`); }
+
+        } catch (e) { alert(`An error occurred during conversion: ${e.message}`); }
         btn.classList.remove('loading');
     },
 
@@ -224,10 +237,10 @@ const app = {
         ui.$('searchInput').addEventListener('keypress', (e) => e.key === 'Enter' && this.search());
         ui.$('btnPlaceOrder').addEventListener('click', () => this.placeOrder());
         ui.$('orderType').addEventListener('change', (e) => ui.$('limitPriceField').classList.toggle('hidden', e.target.value !== 'LMT'));
-        
+
         const btnConfirmFx = ui.$('btnConfirmFx');
         if (btnConfirmFx) btnConfirmFx.addEventListener('click', () => this.placeFxOrder());
-        
+
         const btnCancelFx = ui.$('btnCancelFx');
         if (btnCancelFx) btnCancelFx.addEventListener('click', () => ui.$('fxModal').classList.add('hidden'));
 
@@ -240,20 +253,16 @@ const app = {
                 this.loadChartWithInterval(period, bar, intervalLabel);
             }
         });
-        
+
         ui.$('dashboardTabs').addEventListener('click', (e) => {
             const targetButton = e.target.closest('.tab-btn');
             if (targetButton) {
                 const tabId = targetButton.dataset.tab;
-
                 document.querySelectorAll('#dashboardTabs .tab-btn').forEach(btn => btn.classList.remove('active'));
                 document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
-
                 targetButton.classList.add('active');
                 const activeContent = ui.$(`tab-${tabId}`);
-                if (activeContent) {
-                    activeContent.classList.add('active');
-                }
+                if (activeContent) activeContent.classList.add('active');
             }
         });
         ui.setConnectionStatus('Disconnected');
