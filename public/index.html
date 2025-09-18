@@ -10,17 +10,17 @@
 <body>
     <div class="container">
         <div class="header">
-            <div class="logo">💹 IBKR Trading Platform</div>
+            <div class="logo">IBKR Trading Platform</div>
             <div style="display: flex; align-items: center; gap: 16px;">
                 <div class="status-badge disconnected" id="connectionStatus">Disconnected</div>
                 <button class="btn btn-primary" id="btnConnect"><span class="btn-text">Connect</span><div class="loader"></div></button>
                 <button class="btn btn-danger hidden" id="btnDisconnect"><span class="btn-text">Disconnect</span><div class="loader"></div></button>
             </div>
         </div>
-<div id="dashboardLoader"></div>
+        <div id="dashboardLoader"></div>
      
         <div class="card hidden" id="portfolioDashboard">
-            <h2 class="card-title">📊 Portfolio Dashboard: <span id="activeAccountDisplay"></span></h2>
+            <h2 class="card-title">Portfolio Dashboard: <span id="activeAccountDisplay"></span></h2>
             <div class="dashboard-tabs" id="dashboardTabs">
                 <button class="tab-btn active" data-tab="summary">Summary</button>
                 <button class="tab-btn" data-tab="trades">Trades</button>
@@ -45,7 +45,7 @@
         </div>
 
         <div class="card">
-            <h2 class="card-title">🔍 Stock Search</h2>
+            <h2 class="card-title">Stock Search</h2>
             <div class="input-group">
                 <div class="input-field"><label>Symbol or Company Name</label><input type="text" id="searchInput" placeholder="e.g., AAPL or Apple"></div>
                 <button class="btn btn-primary" id="btnSearch" disabled><span class="btn-text">Search</span><div class="loader"></div></button>
@@ -57,7 +57,7 @@
         </div>
 
         <div class="card">
-            <h2 class="card-title">🛒 Place Order</h2>
+            <h2 class="card-title">Place Order</h2>
             <div id="positionInfo" class="hidden" style="margin-bottom: 16px; color: var(--primary-blue);"></div>
             <div class="input-group">
                 <div class="input-field"><label>Contract ID</label><input type="text" id="orderConid" readonly></div>
@@ -71,7 +71,7 @@
         </div>
 
         <div class="card">
-            <h2 class="card-title">📈 Chart</h2>
+            <h2 class="card-title">Chart</h2>
             <div id="chartPriceInfo" style="padding-bottom: 20px; margin-bottom: 10px; border-bottom: 1px solid var(--border-color);">
                 </div>
             <div id="chartIntervals" class="chart-intervals">
@@ -89,7 +89,7 @@
         
         <div class="card">
             <details id="apiLogContainer">
-                <summary class="card-title" style="border:none; margin:0;">📜 Live API Log</summary>
+                <summary class="card-title" style="border:none; margin:0;">Live API Log</summary>
                 <div id="apiLog"></div>
             </details>
         </div>
@@ -110,8 +110,6 @@
         </div>
     </div>
     
-    <script src="js/api.js"></script>
-    <script src="js/design.js"></script>
-    <script src="js/app.js"></script>
+    <script type="module" src="js/app.js"></script>
 </body>
 </html>

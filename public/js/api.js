@@ -23,3 +23,5 @@ const api = {
     GET(url) { return this.call('GET', url); },
     POST(url, body) { return this.call('POST', url, body); }
 };
+
+export default api;
