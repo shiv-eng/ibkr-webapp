@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IBKR Professional Trading Platform</title>
+    <link rel="stylesheet" href="css/style.css">
+    <script src="https://cdn.jsdelivr.net/npm/apexcharts"></script>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="logo">💹 IBKR Trading Platform</div>
+            <div style="display: flex; align-items: center; gap: 16px;">
+                <div class="status-badge disconnected" id="connectionStatus">Disconnected</div>
+                <button class="btn btn-primary" id="btnConnect"><span class="btn-text">Connect</span><div class="loader"></div></button>
+                <button class="btn btn-danger hidden" id="btnDisconnect"><span class="btn-text">Disconnect</span><div class="loader"></div></button>
+            </div>
+        </div>
+
+        <div class="card hidden" id="portfolioDashboard">
+            <h2 class="card-title">📊 Portfolio Dashboard: <span id="activeAccountDisplay"></span></h2>
+            <div class="dashboard-tabs" id="dashboardTabs">
+                <button class="tab-btn active" data-tab="summary">Summary</button>
+                <button class="tab-btn" data-tab="trades">Trades</button>
+                <button class="tab-btn" data-tab="positions">Portfolio</button>
+                <button class="tab-btn" data-tab="orders">Orders</button>
+            </div>
+            <div id="tab-summary" class="tab-content active">
+                <div class="summary-grid" id="summaryGrid"></div>
+            </div>
+            <div id="tab-trades" class="tab-content"><div class="table-container"><table id="tradesTable">
+                <thead><tr><th>Action</th><th>Qty</th><th>Symbol</th><th>Description</th><th>Price</th><th>Amount</th></tr></thead>
+                <tbody></tbody>
+            </table></div></div>
+            <div id="tab-positions" class="tab-content"><div class="table-container"><table id="positionsTable">
+                <thead><tr><th>Symbol</th><th>Position</th><th>Mkt Price</th><th>Mkt Value</th><th>Avg Cost</th><th>Unrealized P&L</th></tr></thead>
+                <tbody></tbody>
+            </table></div></div>
+            <div id="tab-orders" class="tab-content"><div class="table-container"><table id="ordersTable">
+                <thead><tr><th>Side</th><th>Symbol</th><th>Description</th><th>Status</th></tr></thead>
+                <tbody></tbody>
+            </table></div></div>
+        </div>
+
+        <div class="card">
+            <h2 class="card-title">🔍 Stock Search</h2>
+            <div class="input-group">
+                <div class="input-field"><label>Symbol or Company Name</label><input type="text" id="searchInput" placeholder="e.g., AAPL or Apple"></div>
+                <button class="btn btn-primary" id="btnSearch" disabled><span class="btn-text">Search</span><div class="loader"></div></button>
+            </div>
+            <div class="table-container"><table id="searchResults">
+                <thead><tr><th>Symbol</th><th>Company</th><th>Exchange</th><th>Price</th><th>Action</th></tr></thead>
+                <tbody><tr><td colspan="5" style="text-align: center;">Connect to search for stocks.</td></tr></tbody>
+            </table></div>
+        </div>
+
+        <div class="card">
+            <h2 class="card-title">🛒 Place Order</h2>
+            <div id="positionInfo" class="hidden" style="margin-bottom: 16px; color: var(--primary-blue);"></div>
+            <div class="input-group">
+                <div class="input-field"><label>Contract ID</label><input type="text" id="orderConid" readonly></div>
+                <div class="input-field"><label>Symbol</label><input type="text" id="orderSymbol" readonly></div>
+                <div class="input-field"><label>Side</label><select id="orderSide"><option value="BUY">Buy</option><option value="SELL">Sell</option></select></div>
+                <div class="input-field"><label>Quantity</label><input type="number" id="orderQty" min="1"></div>
+                <div class="input-field"><label>Order Type</label><select id="orderType"><option value="MKT">Market</option><option value="LMT">Limit</option></select></div>
+                <div class="input-field hidden" id="limitPriceField"><label>Limit Price</label><input type="number" id="orderPrice" step="0.01"></div>
+                <button class="btn btn-success" id="btnPlaceOrder" disabled><span class="btn-text">Place Order</span><div class="loader"></div></button>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2 class="card-title">📈 Chart</h2>
+            <div id="chartPriceInfo" style="padding-bottom: 20px; margin-bottom: 10px; border-bottom: 1px solid var(--border-color);">
+                </div>
+            <div id="chartIntervals" class="chart-intervals">
+                <button class="btn-interval active" data-period="1d" data-bar="5min">1D</button>
+                <button class="btn-interval" data-period="5d" data-bar="15min">5D</button>
+                <button class="btn-interval" data-period="1m" data-bar="1h">1M</button>
+                <button class="btn-interval" data-period="6m" data-bar="1d">6M</button>
+                <button class="btn-interval" data-period="1y" data-bar="1d">YTD</button>
+                <button class="btn-interval" data-period="1y" data-bar="1w">1Y</button>
+                <button class="btn-interval" data-period="5y" data-bar="1w">5Y</button>
+                <button class="btn-interval" data-period="20y" data-bar="1m">Max</button>
+            </div>
+            <div id="chartContainer"><p style="color:var(--text-muted)">Select a stock to view its chart.</p></div>
+        </div>
+        
+        <div class="card">
+            <details id="apiLogContainer">
+                <summary class="card-title" style="border:none; margin:0;">📜 Live API Log</summary>
+                <div id="apiLog"></div>
+            </details>
+        </div>
+    </div>
+
+    <div id="fxModal" class="modal-overlay hidden">
+        <div class="modal-content card">
+            <h2 class="card-title">Currency Conversion Required</h2>
+            <p id="fxModalText" style="margin-bottom: 20px;">Your order was rejected due to insufficient funds in the target currency.</p>
+            <div class="input-group">
+                <div class="input-field">
+                    <label>Amount to Convert (USD)</label>
+                    <input type="number" id="fxAmount" step="100">
+                </div>
+                <button class="btn btn-success" id="btnConfirmFx"><span class="btn-text">Convert & Retry</span><div class="loader"></div></button>
+                <button class="btn btn-danger" id="btnCancelFx"><span class="btn-text">Cancel</span></button>
+            </div>
+        </div>
+    </div>
+    
+    <script src="js/api.js"></script>
+    <script src="js/design.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html>
